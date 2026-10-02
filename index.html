@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang='tr'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<meta name='description' content='localStorage kayıtlı, sürükle-bırak özellikli Kanban pano'>
+<title>Kanban Pano</title>
+<link rel='icon' href='data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>📋</text></svg>'>
+<script src='https://cdn.tailwindcss.com'></script>
+<script>tailwind.config = { darkMode: 'class' };</script>
+<script>
+  (function () {
+    var t = localStorage.getItem('kanban-theme');
+    if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark');
+    }
+  })();
+</script>
+<style>
+  .card.dragging { opacity: .4; transform: rotate(2deg) scale(.98); }
+  .drop-zone.over { outline: 2px dashed #6366f1; outline-offset: -4px; background: rgba(99, 102, 241, .06); }
+  .placeholder { height: 4px; border-radius: 9999px; background: #6366f1; flex-shrink: 0; }
+  dialog::backdrop { background: rgba(15, 23, 42, .55); backdrop-filter: blur(2px); }
+  .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+</style>
+</head>
+<body class='min-h-screen bg-gradient-to-br from-slate-100 via-slate-100 to-indigo-100 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950 text-slate-800 dark:text-slate-100 transition-colors'>
+
+<header class='max-w-7xl mx-auto px-4 pt-8 pb-5 flex flex-wrap gap-4 items-center justify-between'>
+  <div>
+    <h1 class='text-2xl sm:text-3xl font-bold tracking-tight'>📋 Kanban Pano</h1>
+    <p id='summary' class='text-sm text-slate-500 dark:text-slate-400 mt-1'></p>
+  </div>
+  <div class='flex flex-wrap gap-2 items-center'>
+    <input id='search' type='search' placeholder='Kart ara…' aria-label='Kart ara' class='px-3 py-2 w-44 sm:w-56 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'>
+    <button id='newBtn' class='px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold shadow-lg shadow-indigo-600/20 transition' title='Yeni kart (N)'>＋ Yeni Kart</button>
+    <button id='clearDone' class='px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition' title='Tamamlananları temizle'>🧹</button>
+    <button id='themeBtn' class='px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition' aria-label='Temayı değiştir' title='Temayı değiştir'>🌙</button>
+  </div>
+</header>
+
+<main id='board' class='max-w-7xl mx-auto px-4 pb-10 grid gap-5 md:grid-cols-3'></main>
+
+<footer class='text-center text-xs text-slate-500 dark:text-slate-400 pb-8'>
+  Kartları sürükleyip bırakın · Düzenlemek için tıklayın · <kbd class='px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700'>N</kbd> yeni kart · Veriler tarayıcınızda saklanır
+</footer>
+
+<dialog id='modal' class='m-auto rounded-2xl p-0 w-[min(92vw,460px)] bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 shadow-2xl'>
+  <form id='form' class='p-6 space-y-4'>
+    <h2 id='modalTitle' class='text-lg font-semibold'>Yeni Kart</h2>
+    <label class='block'>
+      <span class='text-xs font-medium text-slate-500 dark:text-slate-400'>Başlık</span>
+      <input id='fTitle' required maxlength='120' placeholder='Ne yapılacak?' class='mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500'>
+    </label>
+    <label class='block'>
+      <span class='text-xs font-medium text-slate-500 dark:text-slate-400'>Açıklama</span>
+      <textarea id='fDesc' rows='3' maxlength='1000' placeholder='İsteğe bağlı detaylar' class='mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y'></textarea>
+    </label>
+    <div class='grid grid-cols-2 gap-3'>
+      <label class='block'>
+        <span class='text-xs font-medium text-slate-500 dark:text-slate-400'>Öncelik</span>
+        <select id='fPriority' class='mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500'>
+          <option value='low'>Düşük</option>
+          <option value='mid' selected>Orta</option>
+          <option value='high'>Yüksek</option>
+        </select>
+      </label>
+      <label class='block'>
+        <span class='text-xs font-medium text-slate-500 dark:text-slate-400'>Sütun</span>
+        <select id='fCol' class='mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500'></select>
+      </label>
+    </div>
+    <div class='flex items-center justify-between pt-2'>
+      <button type='button' id='delBtn' class='px-3 py-2 rounded-xl text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition'>🗑 Sil</button>
+      <div class='flex gap-2 ml-auto'>
+        <button type='button' id='cancelBtn' class='px-4 py-2 rounded-xl text-sm border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition'>İptal</button>
+        <button type='submit' class='px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition'>Kaydet</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  const COLS = [
+    { id: 'todo', title: 'Yapılacak', dot: 'bg-slate-400' },
+    { id: 'doing', title: 'Devam Ediyor', dot: 'bg-amber-400' },
+    { id: 'done', title: 'Tamamlandı', dot: 'bg-emerald-500' }
+  ];
+  const PRI = {
+    low: { t: 'Düşük', c: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', b: 'border-l-emerald-400' },
+    mid: { t: 'Orta', c: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300', b: 'border-l-amber-400' },
+    high: { t: 'Yüksek', c: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300', b: 'border-l-rose-500' }
+  };
+  const KEY = 'kanban-board-v1';
+
+  const board = document.getElementById('board');
+  const modal = document.getElementById('modal');
+  const form = document.getElementById('form');
+  const fTitle = document.getElementById('fTitle');
+  const fDesc = document.getElementById('fDesc');
+  const fPriority = document.getElementById('fPriority');
+  const fCol = document.getElementById('fCol');
+  const delBtn = document.getElementById('delBtn');
+  const summary = document.getElementById('summary');
+  const themeBtn = document.getElementById('themeBtn');
+  const searchInput = document.getElementById('search');
+
+  let cards = load();
+  let editingId = null;
+  let dragId = null;
+  let query = '';
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'placeholder';
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  function defaults() {
+    const now = Date.now();
+    return [
+      { id: uid(), title: 'Kanban panoya hoş geldin 👋', desc: 'Kartları sütunlar arasında sürükleyip bırakabilirsin.', priority: 'mid', col: 'todo', created: now },
+      { id: uid(), title: 'Bir kartı düzenle', desc: 'Karta tıklayınca başlık, açıklama ve öncelik değiştirilebilir.', priority: 'low', col: 'todo', created: now },
+      { id: uid(), title: 'Projeyi planla', desc: '', priority: 'high', col: 'doing', created: now },
+      { id: uid(), title: 'Panoyu kur', desc: 'Veriler localStorage ile otomatik kaydedilir.', priority: 'low', col: 'done', created: now }
+    ];
+  }
+
+  function load() {
+    try {
+      const data = JSON.parse(localStorage.getItem(KEY));
+      if (Array.isArray(data)) return data.filter(c => c && c.id && COLS.some(col => col.id === c.col));
+    } catch (e) { /* bozuk veri: varsayılana dön */ }
+    return defaults();
+  }
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(cards)); } catch (e) { console.warn('Kaydedilemedi', e); }
+  }
+
+  const escDiv = document.createElement('div');
+  function esc(s) {
+    escDiv.textContent = s == null ? '' : String(s);
+    return escDiv.innerHTML;
+  }
+
+  function matches(c) {
+    if (!query) return true;
+    return (c.title + ' ' + (c.desc || '')).toLocaleLowerCase('tr').includes(query);
+  }
+
+  function cardEl(c) {
+    const p = PRI[c.priority] || PRI.mid;
+    const colIndex = COLS.findIndex(col => col.id === c.col);
+    const el = document.createElement('article');
+    el.className = 'card group cursor-grab active:cursor-grabbing select-none rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 border-l-4 ' + p.b + ' p-3 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition';
+    el.draggable = true;
+    el.dataset.id = c.id;
+    el.tabIndex = 0;
+    const date = new Date(c.created || Date.now()).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+    el.innerHTML = `
+      <div class='flex items-start justify-between gap-2'>
+        <h3 class='font-medium leading-snug break-words ${c.col === 'done' ? 'line-through text-slate-400 dark:text-slate-500' : ''}'>${esc(c.title)}</h3>
+        <span class='shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${p.c}'>${p.t}</span>
+      </div>
+      ${c.desc ? `<p class='mt-1.5 text-sm text-slate-500 dark:text-slate-400 line-clamp-3 whitespace-pre-line break-words'>${esc(c.desc)}</p>` : ''}
+      <div class='mt-3 flex items-center justify-between text-xs text-slate-400'>
+        <span>🗓 ${date}</span>
+        <span class='flex gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition'>
+          <button data-move='-1' ${colIndex === 0 ? 'disabled' : ''} class='w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30' title='Sola taşı' aria-label='Sola taşı'>←</button>
+          <button data-move='1' ${colIndex === COLS.length - 1 ? 'disabled' : ''} class='w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30' title='Sağa taşı' aria-label='Sağa taşı'>→</button>
+        </span>
+      </div>`;
+    return el;
+  }
+
+  function render() {
+    board.innerHTML = '';
+    COLS.forEach(col => {
+      const list = cards.filter(c => c.col === col.id);
+      const shown = list.filter(matches);
+      const sec = document.createElement('section');
+      sec.className = 'flex flex-col rounded-2xl bg-white/60 dark:bg-slate-900/60 backdrop-blur border border-slate-200/80 dark:border-slate-800 p-4 md:min-h-[65vh]';
+      sec.innerHTML = `
+        <div class='flex items-center justify-between mb-3'>
+          <h2 class='font-semibold flex items-center gap-2'>
+            <span class='w-2.5 h-2.5 rounded-full ${col.dot}'></span>${col.title}
+            <span class='text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'>${list.length}</span>
+          </h2>
+          <button data-add='${col.id}' class='w-8 h-8 rounded-lg text-lg text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 transition' title='Bu sütuna kart ekle' aria-label='${col.title} sütununa kart ekle'>＋</button>
+        </div>
+        <div class='drop-zone flex-1 flex flex-col gap-3 rounded-xl p-1 min-h-[120px] transition' data-col='${col.id}'></div>`;
+      const zone = sec.querySelector('.drop-zone');
+      if (!shown.length) {
+        zone.innerHTML = `<p class='empty text-center text-sm text-slate-400 py-8 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl'>${query ? 'Eşleşen kart yok' : 'Kartları buraya sürükleyin'}</p>`;
+      }
+      shown.forEach(c => zone.appendChild(cardEl(c)));
+      board.appendChild(sec);
+    });
+    const done = cards.filter(c => c.col === 'done').length;
+    const pct = cards.length ? Math.round(done / cards.length * 100) : 0;
+    summary.textContent = `${cards.length} kart · ${done} tamamlandı · %${pct} ilerleme`;
+  }
+
+  function moveCard(id, col, beforeId) {
+    const i = cards.findIndex(c => c.id === id);
+    if (i < 0) return;
+    const [card] = cards.splice(i, 1);
+    card.col = col;
+    if (beforeId && beforeId !== id) {
+      const j = cards.findIndex(c => c.id === beforeId);
+      cards.splice(j < 0 ? cards.length : j, 0, card);
+    } else {
+      let last = -1;
+      cards.forEach((c, k) => { if (c.col === col) last = k; });
+      cards.splice(last + 1, 0, card);
+    }
+    save();
+    render();
+  }
+
+  function getAfterElement(zone, y) {
+    const els = [...zone.querySelectorAll('.card:not(.dragging)')];
+    let best = { offset: -Infinity, el: null };
+    els.forEach(el => {
+      const r = el.getBoundingClientRect();
+      const offset = y - r.top - r.height / 2;
+      if (offset < 0 && offset > best.offset) best = { offset, el };
+    });
+    return best.el;
+  }
+
+  function clearDragUI() {
+    placeholder.remove();
+    board.querySelectorAll('.drop-zone.over').forEach(z => z.classList.remove('over'));
+  }
+
+  // Sürükle-bırak
+  board.addEventListener('dragstart', e => {
+    const el = e.target.closest('.card');
+    if (!el) return;
+    dragId = el.dataset.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragId);
+    requestAnimationFrame(() => el.classList.add('dragging'));
+  });
+
+  board.addEventListener('dragend', e => {
+    const el = e.target.closest('.card');
+    if (el) el.classList.remove('dragging');
+    clearDragUI();
+    dragId = null;
+  });
+
+  board.addEventListener('dragover', e => {
+    const zone = e.target.closest('.drop-zone');
+    if (!zone || !dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    board.querySelectorAll('.drop-zone.over').forEach(z => { if (z !== zone) z.classList.remove('over'); });
+    zone.classList.add('over');
+    const after = getAfterElement(zone, e.clientY);
+    if (after) zone.insertBefore(placeholder, after);
+    else zone.appendChild(placeholder);
+  });
+
+  board.addEventListener('dragleave', e => {
+    const zone = e.target.closest('.drop-zone');
+    if (zone && !zone.contains(e.relatedTarget)) {
+      zone.classList.remove('over');
+      if (placeholder.parentNode === zone) placeholder.remove();
+    }
+  });
+
+  board.addEventListener('drop', e => {
+    const zone = e.target.closest('.drop-zone');
+    if (!zone) return;
+    e.preventDefault();
+    const id = dragId || e.dataTransfer.getData('text/plain');
+    if (!id) return;
+    let next = placeholder.parentNode === zone ? placeholder.nextElementSibling : null;
+    while (next && !next.classList.contains('card')) next = next.nextElementSibling;
+    clearDragUI();
+    moveCard(id, zone.dataset.col, next ? next.dataset.id : null);
+    dragId = null;
+  });
+
+  // Tıklamalar
+  board.addEventListener('click', e => {
+    const add = e.target.closest('[data-add]');
+    if (add) { openModal(null, add.dataset.add); return; }
+    const mv = e.target.closest('[data-move]');
+    if (mv) {
+      e.stopPropagation();
+      const id = mv.closest('.card').dataset.id;
+      const card = cards.find(c => c.id === id);
+      const idx = COLS.findIndex(c => c.id === card.col) + Number(mv.dataset.move);
+      if (idx >= 0 && idx < COLS.length) moveCard(id, COLS[idx].id, null);
+      return;
+    }
+    const cardNode = e.target.closest('.card');
+    if (cardNode) openModal(cardNode.dataset.id);
+  });
+
+  board.addEventListener('keydown', e => {
+    const cardNode = e.target.closest('.card');
+    if (cardNode && e.target === cardNode && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      openModal(cardNode.dataset.id);
+    }
+  });
+
+  // Modal
+  fCol.innerHTML = COLS.map(c => `<option value='${c.id}'>${c.title}</option>`).join('');
+
+  function openModal(id, col) {
+    editingId = id || null;
+    const card = id ? cards.find(c => c.id === id) : null;
+    document.getElementById('modalTitle').textContent = card ? 'Kartı Düzenle' : 'Yeni Kart';
+    fTitle.value = card ? card.title : '';
+    fDesc.value = card ? (card.desc || '') : '';
+    fPriority.value = card ? card.priority : 'mid';
+    fCol.value = card ? card.col : (col || 'todo');
+    delBtn.classList.toggle('invisible', !card);
+    modal.showModal();
+    setTimeout(() => fTitle.focus(), 30);
+  }
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const title = fTitle.value.trim();
+    if (!title) { fTitle.focus(); return; }
+    const data = { title, desc: fDesc.value.trim(), priority: fPriority.value, col: fCol.value };
+    if (editingId) {
+      const card = cards.find(c => c.id === editingId);
+      const colChanged = card && card.col !== data.col;
+      if (card) Object.assign(card, data);
+      if (colChanged) { moveCard(card.id, data.col, null); modal.close(); return; }
+    } else {
+      cards.push({ id: uid(), created: Date.now(), ...data });
+    }
+    save();
+    render();
+    modal.close();
+  });
+
+  delBtn.addEventListener('click', () => {
+    if (!editingId) return;
+    if (!confirm('Bu kart silinsin mi?')) return;
+    cards = cards.filter(c => c.id !== editingId);
+    save();
+    render();
+    modal.close();
+  });
+
+  document.getElementById('cancelBtn').addEventListener('click', () => modal.close());
+  modal.addEventListener('click', e => { if (e.target === modal) modal.close(); });
+  document.getElementById('newBtn').addEventListener('click', () => openModal(null, 'todo'));
+
+  document.getElementById('clearDone').addEventListener('click', () => {
+    const n = cards.filter(c => c.col === 'done').length;
+    if (!n) { alert('Tamamlanan kart yok.'); return; }
+    if (!confirm(n + ' tamamlanan kart silinsin mi?')) return;
+    cards = cards.filter(c => c.col !== 'done');
+    save();
+    render();
+  });
+
+  // Arama
+  searchInput.addEventListener('input', () => {
+    query = searchInput.value.trim().toLocaleLowerCase('tr');
+    render();
+  });
+
+  // Tema
+  function syncThemeIcon() {
+    themeBtn.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+  }
+  themeBtn.addEventListener('click', () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('kanban-theme', dark ? 'dark' : 'light');
+    syncThemeIcon();
+  });
+
+  // Kısayol: N = yeni kart
+  document.addEventListener('keydown', e => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (modal.open || tag === 'input' || tag === 'textarea' || tag === 'select' || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openModal(null, 'todo'); }
+  });
+
+  // Sekmeler arası senkron
+  window.addEventListener('storage', e => {
+    if (e.key === KEY) { cards = load(); render(); }
+  });
+
+  syncThemeIcon();
+  render();
+  save();
+</script>
+</body>
+</html>
